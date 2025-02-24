@@ -8,3 +8,4 @@ pytrends
 numpy
 httpx
 uvicorn
+scikit-learn
