@@ -9,3 +9,4 @@ numpy
 httpx
 uvicorn
 scikit-learn
+lightgbm
