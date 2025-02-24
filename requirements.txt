@@ -1,0 +1,10 @@
+fastapi
+tweepy
+python-dotenv
+pydantic
+joblib
+pandas
+pytrends
+numpy
+httpx
+uvicorn
