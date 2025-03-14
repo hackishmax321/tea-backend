@@ -182,8 +182,8 @@ async def predict_local_market_release(data: PredictionRequest):
         'month': data.month,
         'Processing Method': processing_method_encoded,
         'Elevation': elevation_encoded,
-        'whole production Quantity (Kg)': 0,  # Default or dynamic input
-        'production Total (kg)': 0,          # Default or dynamic input
+        'whole production Quantity (Kg)': 0,  
+        'production Total (kg)': 0,          
         'inflation rate': data.inflation_rate
     }])
 
@@ -510,6 +510,54 @@ async def get_google_trends(request: TrendRequest):
         }
     }
 
+RAPIDAPI_KEY = "6496790f8bmsha07b1cf7256f9c2p1995fbjsne7ca8be11817"
+RAPIDAPI_HOST = "google-search74.p.rapidapi.com"
+
+@app.post("/get-google-trends-dates-new")
+async def get_google_trends_RAPID(request: TrendRequest):
+    """
+    Fetches Google search trend-related data for the specified topics.
+    """
+    conn = http.client.HTTPSConnection(RAPIDAPI_HOST)
+
+    headers = {
+        'x-rapidapi-key': RAPIDAPI_KEY,
+        'x-rapidapi-host': RAPIDAPI_HOST
+    }
+
+    trend_data = {}
+    shared_dates = []  
+
+    for topic in request.topics:
+        try:
+            query = f"/?query={topic}&limit=10&related_keywords=true"
+            conn.request("GET", query, headers=headers)
+
+            res = conn.getresponse()
+            data = res.read()
+            response_json = json.loads(data.decode("utf-8"))
+
+            # Extract relevant trend-related data
+            results = response_json.get("results", [])
+            keywords = response_json.get("related_keywords", [])
+
+            trend_data[topic] = {
+                "results": results,  # List of search result summaries
+                "related_keywords": keywords  # Related search terms
+            }
+
+            time.sleep(2)  # Short delay to prevent API rate limiting
+
+        except Exception as e:
+            print(f"Error fetching data for {topic}: {e}")
+            trend_data[topic] = {"error": "Failed to fetch data"}
+
+    return {
+        "trend_data": {
+            **trend_data,
+            "dates": shared_dates
+        }
+    }
 
 
 # Anlyze Twitter 
@@ -618,25 +666,18 @@ def group_posts_by_year(posts):
 
 # Facebook Analyssis
 def count_posts_by_year(data):
-    """
-    Counts posts based on year from the timestamp.
 
-    Args:
-        data (dict): The parsed JSON response containing the posts.
-
-    Returns:
-        dict: A dictionary with years as keys and post counts as values.
-    """
     year_count = defaultdict(int)
 
     # Loop through each post in the response
     for post in data.get("results", []):
         timestamp = post.get("timestamp")
+        comments_count = post.get("comments_count", 0)
         if timestamp:
             # Convert timestamp to a datetime object
             date = datetime.utcfromtimestamp(timestamp)
             year = date.year
-            year_count[year] += 1
+            year_count[year] = year_count[year] + comments_count
 
     # Sorting the years in ascending order and return the result
     sorted_year_count = dict(sorted(year_count.items()))
@@ -792,3 +833,50 @@ async def get_item_counts_instagram(request: KeywordsRequest):
 
     # Return the results
     return result
+
+
+
+# Sales Tea Types (BP1 and PF1)
+rf_model_bp1 = joblib.load("sales/tea_types/model_sales_ttbp1v2.joblib")  
+rf_model_pf1 = joblib.load("sales/tea_types/model_sales_ttpf1v2.joblib")
+
+class PredictionRequest(BaseModel):
+    year: int
+    dollar_rate: float
+    elevation: str
+    # avg_price: float
+    sales_code: int
+    tea_type: str  # Either 'BP1' or 'PF1'
+
+# Define prediction function
+def predict_price(model, year, dollar_rate, elevation, sales_code):
+    input_data = np.array([[year, sales_code, dollar_rate, elevation]])
+    prediction = model.predict(input_data)
+    yr_weights_balance = year - 2020
+    final_prediction = prediction[0]
+
+    if(yr_weights_balance > 0):
+            final_prediction = final_prediction + (0.1*(final_prediction*yr_weights_balance)/100)
+    return final_prediction
+
+
+@app.post("/predict-sales-unit-price")
+async def predict_tea_price(request: PredictionRequest):
+    # Select the correct model based on tea type
+    if request.tea_type.upper() == "BP1":
+        model = rf_model_bp1
+    elif request.tea_type.upper() == "PF1":
+        model = rf_model_pf1
+    else:
+        raise HTTPException(status_code=400, detail="Invalid tea type. Choose 'BP1' or 'PF1'.")
+
+    # Make prediction
+    elevation_encoded = elevation_map.get(request.elevation, elevation_map['Unknown'])
+    predicted_quantity = predict_price(
+        model, request.year, request.dollar_rate, elevation_encoded, request.sales_code
+    )
+
+    return {"tea_type": request.tea_type, "predicted_unit": predicted_quantity}
+
+
+
